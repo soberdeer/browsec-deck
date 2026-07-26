@@ -5,4 +5,4 @@ gui/browsec-desktop.png
 gui/payload.tar.gz
 gui/core
 .DS_Store
-./idea
+.idea/
