@@ -1,0 +1,11 @@
+[Desktop Entry]
+Name=Browsec Deck
+Comment=Browsec Deck 1.0.0 for Steam Deck
+X-Browsec-Deck-Version=1.0.0
+Exec=@INSTALL_BASE@/launch.sh
+Icon=browsec-deck
+Terminal=false
+Type=Application
+Categories=Network;Security;
+StartupNotify=true
+StartupWMClass=Browsec

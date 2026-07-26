@@ -1,0 +1,149 @@
+{
+  "processPathRegexpMap": [
+    {
+      "sourcePathRegexp": [
+        "[sS]team",
+        "[sS]teamwebhelper",
+        "[sS]teamapps",
+        "[cC]ompatdata",
+        "[pP]roton",
+        "[pP]ressure-vessel"
+      ],
+      "toPathRegexps": [
+        "(?i)(^|/)steam($|/)",
+        "(?i)steamwebhelper",
+        "(?i)steamservice",
+        "(?i)/steamapps/",
+        "(?i)/compatdata/",
+        "(?i)proton",
+        "(?i)pressure-vessel"
+      ],
+      "smartRulesPreset": {
+        "key": "deck-steam",
+        "title": "Steam + all Steam games",
+        "description": "Steam client, native games, Proton games and games on the SD card.",
+        "platforms": [
+          "linux"
+        ],
+        "showForModes": [
+          "proxyOnly"
+        ]
+      }
+    },
+    {
+      "sourcePathRegexp": [
+        "[eE]mu[dD]eck",
+        "[eE]mulation[sS]tation",
+        "[eE][sS]-[dD][eE]",
+        "[rR]etro[aA]rch",
+        "[dD]olphin",
+        "[pP][cC][sS][xX]2",
+        "[rR][pP][cC][sS]3",
+        "[dD]uck[sS]tation",
+        "[xX]emu",
+        "[rR]yujinx",
+        "[cC]emu"
+      ],
+      "toPathRegexps": [
+        "(?i)(emudeck|emulationstation|es-de|retroarch|dolphin-emu|pcsx2|rpcs3|duckstation|xemu|ryujinx|cemu|melonds|azahar|lime3ds|suyu|yuzu)"
+      ],
+      "smartRulesPreset": {
+        "key": "deck-emudeck",
+        "title": "EmuDeck + emulators",
+        "description": "EmuDeck, ES-DE, RetroArch and common standalone emulators.",
+        "platforms": [
+          "linux"
+        ],
+        "showForModes": [
+          "proxyOnly"
+        ]
+      }
+    },
+    {
+      "sourcePathRegexp": [
+        "[fF]irefox",
+        "[cC]hrome",
+        "[cC]hromium",
+        "[bB]rave",
+        "[vV]ivaldi",
+        "[oO]pera",
+        "[lL]ibre[wW]olf",
+        "[fF]loorp"
+      ],
+      "toPathRegexps": [
+        "(?i)(firefox|chrome|chromium|brave|vivaldi|opera|librewolf|floorp|microsoft-edge)"
+      ],
+      "smartRulesPreset": {
+        "key": "deck-browsers",
+        "title": "Browsers",
+        "description": "Firefox, Chrome, Chromium, Brave, Vivaldi, Opera, LibreWolf and Floorp.",
+        "platforms": [
+          "linux"
+        ],
+        "showForModes": [
+          "proxyOnly"
+        ]
+      }
+    },
+    {
+      "sourcePathRegexp": [
+        "[tT]elegram"
+      ],
+      "toPathRegexps": [
+        "(?i)telegram"
+      ],
+      "smartRulesPreset": {
+        "key": "telegram",
+        "title": "Telegram",
+        "icon_url": "https://storage.googleapis.com/bs-desktop-assets/telegram.png",
+        "platforms": [
+          "linux"
+        ],
+        "showForModes": [
+          "proxyOnly"
+        ]
+      }
+    },
+    {
+      "sourcePathRegexp": [
+        "[dD]iscord"
+      ],
+      "toPathRegexps": [
+        "(?i)discord"
+      ],
+      "smartRulesPreset": {
+        "key": "discord",
+        "title": "Discord",
+        "icon_url": "https://storage.googleapis.com/bs-desktop-assets/discord.png",
+        "platforms": [
+          "linux"
+        ],
+        "showForModes": [
+          "proxyOnly"
+        ]
+      }
+    },
+    {
+      "sourcePathRegexp": [
+        "[pP]lasma-[dD]iscover",
+        "[pP]ackage[kK]it",
+        "[fF]latpak",
+        "[fF]wupd"
+      ],
+      "toPathRegexps": [
+        "(?i)(plasma-discover|packagekitd|flatpak-system-helper|(^|/)flatpak$|fwupd)"
+      ],
+      "smartRulesPreset": {
+        "key": "deck-discover",
+        "title": "KDE Discover",
+        "description": "Discover and its PackageKit, Flatpak and firmware download backends.",
+        "platforms": [
+          "linux"
+        ],
+        "showForModes": [
+          "proxyOnly"
+        ]
+      }
+    }
+  ]
+}

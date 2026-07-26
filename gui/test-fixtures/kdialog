@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+printf '%q ' "$@" >>/tmp/kdialog-calls.log
+printf '\n' >>/tmp/kdialog-calls.log
+
+joined=" $* "
+if [[ "$joined" == *" --progressbar "* ]]; then
+  printf 'org.kde.kdialog-test /ProgressDialog\n'
+  exit 0
+fi
+if [[ "$joined" == *" --menu "* ]]; then
+  printf '%s\n' "${FAKE_KDIALOG_MENU:-install}"
+  exit 0
+fi
+if [[ "$joined" == *" --yesno "* ]]; then
+  if [[ "$joined" == *"Installation complete"* ]]; then
+    exit 1
+  fi
+  exit 0
+fi
+exit 0

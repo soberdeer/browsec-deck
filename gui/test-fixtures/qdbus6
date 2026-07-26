@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+printf '%q ' "$@" >>/tmp/qdbus-calls.log
+printf '\n' >>/tmp/qdbus-calls.log

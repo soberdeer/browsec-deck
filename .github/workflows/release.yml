@@ -1,0 +1,77 @@
+name: Release installer
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Check out the tagged source
+        uses: actions/checkout@v7
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Validate the release version
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          project_version="$(
+            sed -n 's/^readonly APP_VERSION="\([^"]*\)"$/\1/p' build.sh
+          )"
+          tag_version="${GITHUB_REF_NAME#v}"
+
+          [[ "$project_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          [[ "$GITHUB_REF_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          if [[ "$tag_version" != "$project_version" ]]; then
+            printf 'Tag version %s does not match project version %s.\n' \
+              "$tag_version" "$project_version" >&2
+            exit 1
+          fi
+
+          printf 'PROJECT_VERSION=%s\n' "$project_version" >>"$GITHUB_ENV"
+
+      - name: Build the installer
+        shell: bash
+        run: ./build.sh
+
+      - name: Prepare and verify release files
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+
+          installer="Browsec-Deck-Installer-${PROJECT_VERSION}.tar.gz"
+          checksum="Browsec-Deck-Installer-${PROJECT_VERSION}.sha256"
+
+          cd dist
+          sha256sum "$installer" >"$checksum"
+          sha256sum --check "$checksum"
+
+          printf 'INSTALLER_ASSET=%s\n' "$installer" >>"$GITHUB_ENV"
+          printf 'CHECKSUM_ASSET=%s\n' "$checksum" >>"$GITHUB_ENV"
+
+      - name: Create the GitHub release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -Eeuo pipefail
+
+          gh release create "$GITHUB_REF_NAME" \
+            "dist/$INSTALLER_ASSET" \
+            "dist/$CHECKSUM_ASSET" \
+            --verify-tag \
+            --title "Browsec Deck ${PROJECT_VERSION}" \
+            --generate-notes
