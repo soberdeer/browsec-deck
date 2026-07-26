@@ -25,6 +25,7 @@ const (
 	projectVersion   = "1.0.0"
 	productName      = "Browsec Deck " + projectVersion
 	payloadRoot      = "browsec-deck-" + projectVersion
+	systemRootName   = ".browsec-deck"
 	officialIconHash = "111a51070cd8eb42216fb84ed08f40dfe84b121c9923d9cdbe42f7d5fc2cda0e"
 )
 
@@ -129,6 +130,61 @@ func safeTarget(root, name string) (string, error) {
 		return "", fmt.Errorf("payload path escapes extraction directory: %s", name)
 	}
 	return target, nil
+}
+
+func systemRootFor(home string) (string, error) {
+	cleanHome := filepath.Clean(home)
+	if !filepath.IsAbs(cleanHome) || cleanHome == string(filepath.Separator) {
+		return "", fmt.Errorf("unsafe home directory: %s", home)
+	}
+	homeParent, err := filepath.EvalSymlinks(filepath.Dir(cleanHome))
+	if err != nil {
+		return "", fmt.Errorf("cannot resolve the home partition: %w", err)
+	}
+	if !filepath.IsAbs(homeParent) ||
+		homeParent == string(filepath.Separator) {
+		return "", fmt.Errorf("unsafe home partition root: %s", homeParent)
+	}
+	return filepath.Join(homeParent, systemRootName), nil
+}
+
+func installBaseFor(home, username string) (string, error) {
+	systemRoot, err := systemRootFor(home)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(systemRoot, username), nil
+}
+
+func verifyRootControlledDirectory(path string) error {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return fmt.Errorf("%s is not a real directory", path)
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || stat.Uid != 0 {
+		return fmt.Errorf("%s is not owned by root", path)
+	}
+	if info.Mode().Perm()&0o022 != 0 {
+		return fmt.Errorf("%s is writable by group or other users", path)
+	}
+	return nil
+}
+
+func ensureRootControlledDirectory(path string, mode os.FileMode) error {
+	if err := verifyRootControlledDirectory(filepath.Dir(path)); err != nil {
+		return err
+	}
+	if err := os.Mkdir(path, mode); err != nil && !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	if err := verifyRootControlledDirectory(path); err != nil {
+		return err
+	}
+	return os.Chmod(path, mode)
 }
 
 func extractPayload(destination string) error {
@@ -251,10 +307,10 @@ func runPrivileged(p *progressDialog, action, targetUser string) (string, error)
 	if pkexec == "" {
 		return "", errors.New("pkexec is not installed")
 	}
-	self, err := os.Executable()
-	if err != nil {
-		return "", err
-	}
+	// Keep the exact running inode alive across the authorization dialog. Using
+	// the original path would allow a file in Downloads to be replaced before
+	// pkexec opens it as root.
+	self := fmt.Sprintf("/proc/%d/exe", os.Getpid())
 
 	cmd := exec.Command(
 		pkexec,
@@ -329,33 +385,30 @@ func privilegedMain(args []string) int {
 		fmt.Fprintln(os.Stderr, "Error: target user home directory was not found.")
 		return 2
 	}
-
-	cache := filepath.Join(account.HomeDir, ".cache")
-	if _, err := os.Stat(cache); errors.Is(err, os.ErrNotExist) {
-		uid, uidErr := strconv.Atoi(account.Uid)
-		gid, gidErr := strconv.Atoi(account.Gid)
-		if uidErr != nil || gidErr != nil {
-			fmt.Fprintln(os.Stderr, "Error: invalid target user UID or GID.")
-			return 2
-		}
-		if err := os.MkdirAll(cache, 0o755); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: cannot create target cache: %v\n", err)
-			return 2
-		}
-		if err := os.Chown(cache, uid, gid); err != nil {
-			fmt.Fprintf(os.Stderr, "Error: cannot set target cache ownership: %v\n", err)
-			return 2
-		}
-	} else if err != nil {
-		fmt.Fprintf(os.Stderr, "Error: cannot inspect target cache: %v\n", err)
+	systemRoot, err := systemRootFor(account.HomeDir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot locate the secure installation root: %v\n", err)
 		return 2
 	}
-	tempDir, err := os.MkdirTemp(cache, ".browsec-deck-root.")
+	if err := ensureRootControlledDirectory(systemRoot, 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot secure the installation root: %v\n", err)
+		return 2
+	}
+	tempRoot := filepath.Join(systemRoot, ".tmp")
+	if err := ensureRootControlledDirectory(tempRoot, 0o700); err != nil {
+		fmt.Fprintf(os.Stderr, "Error: cannot secure the temporary root: %v\n", err)
+		return 2
+	}
+	tempDir, err := os.MkdirTemp(tempRoot, "installer.")
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot create root-owned temporary directory: %v\n", err)
 		return 2
 	}
-	defer os.RemoveAll(tempDir)
+	defer func() {
+		_ = os.RemoveAll(tempDir)
+		_ = os.Remove(tempRoot)
+		_ = os.Remove(systemRoot)
+	}()
 	if err := os.Chmod(tempDir, 0o700); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: cannot secure temporary directory: %v\n", err)
 		return 2
@@ -373,13 +426,8 @@ func privilegedMain(args []string) int {
 		command = filepath.Join(kitRoot, "install.sh")
 		commandArgs = []string{"--user", targetUser}
 	case "repair":
-		command = filepath.Join(
-			account.HomeDir,
-			".local",
-			"share",
-			"browsec-deck-system",
-			"repair-capability.sh",
-		)
+		command = filepath.Join(kitRoot, "templates", "repair-capability.sh")
+		commandArgs = []string{"--user", targetUser}
 	case "uninstall":
 		command = filepath.Join(kitRoot, "uninstall.sh")
 		commandArgs = []string{"--user", targetUser}
@@ -394,8 +442,12 @@ func privilegedMain(args []string) int {
 	return 0
 }
 
-func launchBrowsec(home string) error {
-	launcher := filepath.Join(home, ".local", "share", "browsec-deck-system", "launch.sh")
+func launchBrowsec(home, username string) error {
+	installBase, err := installBaseFor(home, username)
+	if err != nil {
+		return err
+	}
+	launcher := filepath.Join(installBase, "launch.sh")
 	if _, err := os.Stat(launcher); err != nil {
 		return err
 	}
@@ -406,8 +458,11 @@ func launchBrowsec(home string) error {
 	return cmd.Start()
 }
 
-func chooseAction(icon, home string) (string, error) {
-	installBase := filepath.Join(home, ".local", "share", "browsec-deck-system")
+func chooseAction(icon, home, username string) (string, error) {
+	installBase, err := installBaseFor(home, username)
+	if err != nil {
+		return "", err
+	}
 	if _, err := os.Stat(installBase); err == nil {
 		return runKDialog(
 			icon,
@@ -423,6 +478,18 @@ func chooseAction(icon, home string) (string, error) {
 			"Uninstall",
 		)
 	}
+	legacyInstallBase := filepath.Join(home, ".local", "share", "browsec-deck-system")
+	if _, err := os.Stat(legacyInstallBase); err == nil {
+		return runKDialog(
+			icon,
+			"--menu",
+			"An older Browsec Deck installation was found. Choose an action:",
+			"install",
+			"Install the secure update",
+			"uninstall",
+			"Uninstall",
+		)
+	}
 
 	message := "<h2>Ready to install</h2>" +
 		"<p>The VPN will be installed on the home partition. " +
@@ -430,9 +497,9 @@ func chooseAction(icon, home string) (string, error) {
 		"<p>✓ Browsec Deck " + projectVersion + "<br>" +
 		"✓ Steam, game, and application profiles<br>" +
 		"✓ DNS setup without repeated password prompts<br>" +
-		"✓ Installation under /home/deck</p>" +
+		"✓ Installation on the home partition</p>" +
 		"<p><small>One system administrator authorization will be required.</small></p>"
-	_, err := runKDialog(
+	_, err = runKDialog(
 		icon,
 		"--yesno",
 		message,
@@ -488,13 +555,18 @@ func main() {
 		return
 	}
 
-	action, err := chooseAction(icon, home)
+	action, err := chooseAction(icon, home, currentUser.Username)
 	if err != nil || action == "" {
 		return
 	}
 
 	if action == "diagnose" {
-		diagnose := filepath.Join(home, ".local", "share", "browsec-deck-system", "diagnose.sh")
+		installBase, pathErr := installBaseFor(home, currentUser.Username)
+		if pathErr != nil {
+			showError(icon, "The secure installation location could not be resolved.", pathErr.Error())
+			return
+		}
+		diagnose := filepath.Join(installBase, "diagnose.sh")
 		output, runErr := exec.Command("/usr/bin/bash", diagnose).CombinedOutput()
 		logPath := writeLatestLog(home, string(output))
 		if runErr != nil {
@@ -552,7 +624,7 @@ func main() {
 			"Close",
 		)
 		if launchErr == nil {
-			if err := launchBrowsec(home); err != nil {
+			if err := launchBrowsec(home, currentUser.Username); err != nil {
 				showError(icon, productName+" could not be launched.", err.Error())
 			}
 		}

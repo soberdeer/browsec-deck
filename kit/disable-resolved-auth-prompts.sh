@@ -36,7 +36,6 @@ while (($#)); do
 done
 
 [[ "$(uname -s)" == "Linux" ]] || die "this script is intended for Linux/SteamOS"
-command -v sudo >/dev/null 2>&1 || die "sudo was not found"
 command -v getent >/dev/null 2>&1 || die "getent was not found"
 id "$TARGET_USER" >/dev/null 2>&1 \
   || die "user '$TARGET_USER' does not exist"
@@ -47,23 +46,22 @@ id "$TARGET_USER" >/dev/null 2>&1 \
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 [[ -n "$TARGET_HOME" && -d "$TARGET_HOME" ]] \
   || die "home directory for '$TARGET_USER' was not found"
-[[ "$(id -un)" == "$TARGET_USER" || "${EUID:-$(id -u)}" -eq 0 ]] \
-  || die "run this script as '$TARGET_USER'"
+[[ "${EUID:-$(id -u)}" -eq 0 ]] \
+  || die "run through sudo: sudo $0 --user $TARGET_USER"
 [[ -r "$SCRIPT_DIR/templates/49-browsec-deck-resolved.rules" ]] \
   || die "the Polkit rule template was not found"
 
-mkdir -p -- "$TARGET_HOME/.cache"
-TEMP_RULE="$(mktemp "$TARGET_HOME/.cache/browsec-resolved-polkit.XXXXXX")"
+install -d -m 0755 -o root -g root /etc/polkit-1/rules.d
+TEMP_RULE="$(mktemp /etc/polkit-1/rules.d/.browsec-resolved-polkit.XXXXXX)"
+chmod 0600 "$TEMP_RULE"
 sed "s|@TARGET_USER@|$TARGET_USER|g" \
   "$SCRIPT_DIR/templates/49-browsec-deck-resolved.rules" >"$TEMP_RULE"
 
 printf '%s\n' \
-  "Passwordless authorization: org.freedesktop.resolve1.*" \
+  "Passwordless authorization: required per-link DNS actions only" \
   "User: $TARGET_USER" \
   "Rule: $RULE_PATH"
-sudo -v
-sudo install -d -m 0755 -o root -g root /etc/polkit-1/rules.d
-sudo install -m 0644 -o root -g root "$TEMP_RULE" "$RULE_PATH"
+install -m 0644 -o root -g root "$TEMP_RULE" "$RULE_PATH"
 
 printf '%s\n' \
   "Done. Polkit will reload the rule automatically." \

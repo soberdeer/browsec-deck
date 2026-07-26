@@ -5,7 +5,6 @@ readonly INSTALL_BASE="@INSTALL_BASE@"
 readonly APP_DIR="$INSTALL_BASE/app"
 readonly APP_BIN="$APP_DIR/browsec-desktop"
 readonly BROWBOX="$APP_DIR/resources/xray/browbox"
-readonly REPAIR="$INSTALL_BASE/repair-capability.sh"
 readonly DECK_APP_ALIASES="$INSTALL_BASE/deck-app-aliases.json"
 
 show_error() {
@@ -25,7 +24,7 @@ show_error() {
 
 capability="$(getcap "$BROWBOX" 2>/dev/null || true)"
 if [[ "$capability" != *"cap_net_admin"* ]]; then
-  show_error "browbox is missing CAP_NET_ADMIN. Run: sudo $REPAIR"
+  show_error "browbox is missing CAP_NET_ADMIN. Open the installer and choose Repair VPN permissions."
   exit 1
 fi
 
@@ -41,7 +40,8 @@ fi
 
 export BROWSEC_PRIVILEGE_MODE=manual
 export BROWSEC_STEAM_DECK=1
-export BDS="$(< "$DECK_APP_ALIASES")"
+BDS="$(< "$DECK_APP_ALIASES")"
+export BDS
 export BROWSEC_FORCED_X11=1
 export ELECTRON_OZONE_PLATFORM_HINT=x11
 

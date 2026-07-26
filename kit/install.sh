@@ -4,36 +4,41 @@ set -Eeuo pipefail
 readonly PRODUCT_NAME="Browsec Deck 1.0.0"
 readonly EXPECTED_DEB_SHA256="479dcbfd72adb3d222c74acb06ef176aafd4472a2df90e37bc820083a5549896"
 readonly EXPECTED_ASAR_SHA256="e1d60c72e0d02832d754a33e2d8a050adfc2a70d59c325aeb70f260141ae1907"
-readonly PATCHED_ASAR_SHA256="cfffdbdd82d216f1834449da993b7c1c1501462ea137645296839c4bf65f48e9"
+readonly DECK_PATCHED_ASAR_SHA256="cfffdbdd82d216f1834449da993b7c1c1501462ea137645296839c4bf65f48e9"
+readonly PATCHED_ASAR_SHA256="ba3db3a0f8d8977113b8d96180f123f2082809c6490439bdd6a8de8bc6986f11"
 readonly EXPECTED_BROWBOX_SHA256="68aeab83cc4ab2659a5b92232261a20746ccdafc3b3d1e19b2d63247eec3bbf7"
 readonly DECK_PATCH_OFFSET=167157093
 readonly DECK_PATCH_LENGTH=962
 readonly DECK_PATCH_SOURCE_SHA256="44837e0ab8d005eb8800d656748e78d4c6ccdfd6ff346f8941d98036b7570f92"
 readonly DECK_PATCH_SHA256="333b332196767a4bf18c225c5096a4d48668a90bf453ef2dd56d6ee9ae488101"
+readonly ELECTRON_SECURITY_PATCH_OFFSET=167331245
+readonly ELECTRON_SECURITY_PATCH_LENGTH=342
+readonly ELECTRON_SECURITY_SOURCE_SHA256="2809526e846d9605a55f008992085ba9e889cf06f8f45e74416ff2b33ba1e2f6"
+readonly ELECTRON_SECURITY_PATCH_SHA256="d3722ea1c01ccd45e52af349a7f5cf675b863db0867540e64f52830085e99718"
 readonly POLKIT_RULE_PATH="/etc/polkit-1/rules.d/49-browsec-deck-resolved.rules"
+readonly SYSTEM_DIR_NAME=".browsec-deck"
 
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
-DEB_PATH=""
+DEB_PATH="$SCRIPT_DIR/payload/browsec-desktop_1.2.2_amd64.deb"
 TARGET_USER="${SUDO_USER:-$(id -un)}"
-ALLOW_OTHER_VERSION=0
 NO_DESKTOP_ENTRY=0
 TEMP_DIR=""
+SYSTEM_ROOT=""
 INSTALL_BASE=""
 APP_DIR=""
+LEGACY_HOME_INSTALL_BASE=""
 
 usage() {
   cat <<'EOF'
 Install Browsec Deck 1.0.0 using the official Browsec 1.2.2 Linux payload.
 
 Usage:
-  ./install.sh [--deb /path/to/browsec-desktop_1.2.2_amd64.deb]
-               [--user deck]
-               [--allow-other-version]
+  ./install.sh [--user deck]
                [--no-desktop-entry]
 
-By default, the installer looks for the .deb in its payload directory, the
-current directory, and ~/Downloads. The application is installed on the home
-partition under ~/.local/share/browsec-deck-system.
+The installer accepts only its bundled and hash-verified Browsec 1.2.2 Debian
+payload. The application is installed on the home partition under a
+root-controlled /home/.browsec-deck directory.
 EOF
 }
 
@@ -46,9 +51,34 @@ note() {
   printf '%s\n' "$*"
 }
 
+verify_root_directory() {
+  local path="$1"
+  local owner
+  local mode
+
+  [[ -d "$path" && ! -L "$path" ]] \
+    || die "$path must be a real directory"
+  owner="$(stat -c '%U:%G' "$path")"
+  [[ "$owner" == "root:root" ]] \
+    || die "$path must be owned by root:root (found $owner)"
+  mode="$(stat -c '%a' "$path")"
+  [[ "$mode" =~ ^[0-7]{3,4}$ ]] || die "cannot verify permissions for $path"
+  (( (8#$mode & 0022) == 0 )) \
+    || die "$path must not be writable by group or other users"
+}
+
+ensure_root_directory() {
+  local path="$1"
+  local mode="$2"
+
+  [[ ! -L "$path" ]] || die "$path must not be a symbolic link"
+  install -d -m "$mode" -o root -g root "$path"
+  verify_root_directory "$path"
+}
+
 cleanup() {
   if [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]]; then
-    rm -rf -- "$TEMP_DIR" 2>/dev/null || sudo rm -rf -- "$TEMP_DIR"
+    rm -rf -- "$TEMP_DIR"
   fi
 }
 trap cleanup EXIT
@@ -94,27 +124,43 @@ apply_deck_asar_patch() {
   dd if="$patch" of="$asar" bs=1M seek="$DECK_PATCH_OFFSET" \
     conv=notrunc oflag=seek_bytes status=none
 
-  [[ "$(sha256_file "$asar")" == "$PATCHED_ASAR_SHA256" ]] \
+  [[ "$(sha256_file "$asar")" == "$DECK_PATCHED_ASAR_SHA256" ]] \
     || die "the patched app.asar failed verification"
 }
 
-find_deb() {
-  local candidate
-  local target_home
-  target_home="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
+apply_electron_security_patch() {
+  local asar="$1"
+  local replacement
+  local source_block_sha
 
-  for candidate in \
-    "$SCRIPT_DIR/payload/browsec-desktop_1.2.2_amd64.deb" \
-    "$SCRIPT_DIR/browsec-desktop_1.2.2_amd64.deb" \
-    "$PWD/browsec-desktop_1.2.2_amd64.deb" \
-    "$target_home/Downloads/browsec-desktop_1.2.2_amd64.deb"
-  do
-    if [[ -f "$candidate" ]]; then
-      DEB_PATH="$candidate"
-      return
-    fi
-  done
-  die "browsec-desktop_1.2.2_amd64.deb was not found; use --deb"
+  [[ "$(sha256_file "$asar")" == "$DECK_PATCHED_ASAR_SHA256" ]] \
+    || die "the Electron security patch requires the verified Steam Deck app.asar"
+
+  source_block_sha="$(
+    dd if="$asar" bs=1M skip="$ELECTRON_SECURITY_PATCH_OFFSET" \
+      count="$ELECTRON_SECURITY_PATCH_LENGTH" iflag=skip_bytes,count_bytes \
+      status=none | sha256_stream
+  )"
+  [[ "$source_block_sha" == "$ELECTRON_SECURITY_SOURCE_SHA256" ]] \
+    || die "unexpected app.asar contents in the Electron security patch region"
+
+  replacement='Rx.webContents.on("will-navigate",(e,t)=>{t.split("#")[0]===Rx.webContents.getURL().split("#")[0]||e.preventDefault()}),Rx.webContents.setWindowOpenHandler(e=>(e.url.startsWith("https://")&&o.shell.openExternal(e.url).catch(()=>{}),{action:"deny"}))'
+  [[ "${#replacement}" -le "$ELECTRON_SECURITY_PATCH_LENGTH" ]] \
+    || die "the Electron security patch is too large"
+
+  printf '%-*s' "$ELECTRON_SECURITY_PATCH_LENGTH" "$replacement" \
+    | dd of="$asar" bs=1M seek="$ELECTRON_SECURITY_PATCH_OFFSET" \
+      conv=notrunc oflag=seek_bytes status=none
+
+  source_block_sha="$(
+    dd if="$asar" bs=1M skip="$ELECTRON_SECURITY_PATCH_OFFSET" \
+      count="$ELECTRON_SECURITY_PATCH_LENGTH" iflag=skip_bytes,count_bytes \
+      status=none | sha256_stream
+  )"
+  [[ "$source_block_sha" == "$ELECTRON_SECURITY_PATCH_SHA256" ]] \
+    || die "the Electron security patch failed block verification"
+  [[ "$(sha256_file "$asar")" == "$PATCHED_ASAR_SHA256" ]] \
+    || die "the hardened app.asar failed verification"
 }
 
 extract_deb() {
@@ -155,17 +201,17 @@ install_desktop_entry() {
   local desktop_file="$applications_dir/browsec-deck.desktop"
   local source_icon="$payload_root/usr/share/icons/hicolor/256x256/apps/browsec-desktop.png"
 
-  sudo install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+  install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_GROUP" \
     "$applications_dir" "$icons_dir" "$bin_dir"
 
   if [[ -f "$source_icon" ]]; then
-    sudo install -m 0644 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+    install -m 0644 -o "$TARGET_USER" -g "$TARGET_GROUP" \
       "$source_icon" "$icons_dir/browsec-deck.png"
   fi
 
   render_template "$SCRIPT_DIR/templates/browsec-deck.desktop" \
     "$TEMP_DIR/browsec-deck.desktop"
-  sudo install -m 0644 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+  install -m 0644 -o "$TARGET_USER" -g "$TARGET_GROUP" \
     "$TEMP_DIR/browsec-deck.desktop" "$desktop_file"
   sudo -u "$TARGET_USER" ln -sfn \
     "$INSTALL_BASE/launch.sh" "$bin_dir/browsec-deck"
@@ -182,19 +228,10 @@ render_template() {
 
 while (($#)); do
   case "$1" in
-    --deb)
-      (($# >= 2)) || die "--deb requires a path"
-      DEB_PATH="$2"
-      shift 2
-      ;;
     --user)
       (($# >= 2)) || die "--user requires a user name"
       TARGET_USER="$2"
       shift 2
-      ;;
-    --allow-other-version)
-      ALLOW_OTHER_VERSION=1
-      shift
       ;;
     --no-desktop-entry)
       NO_DESKTOP_ENTRY=1
@@ -218,35 +255,45 @@ command -v setcap >/dev/null 2>&1 || die "setcap was not found (libcap package)"
 command -v getcap >/dev/null 2>&1 || die "getcap was not found (libcap package)"
 command -v pgrep >/dev/null 2>&1 || die "pgrep was not found"
 command -v dd >/dev/null 2>&1 || die "dd was not found (coreutils package)"
+command -v stat >/dev/null 2>&1 || die "stat was not found (coreutils package)"
+command -v xz >/dev/null 2>&1 || die "xz was not found (xz package)"
 id "$TARGET_USER" >/dev/null 2>&1 || die "user '$TARGET_USER' does not exist"
 [[ "$TARGET_USER" != "root" ]] \
   || die "do not install the client for root; specify a regular user: --user deck"
 [[ "$TARGET_USER" =~ ^[a-z_][a-z0-9_-]*[$]?$ ]] \
   || die "the user name is incompatible with the safe Polkit template"
+[[ "${EUID:-$(id -u)}" -eq 0 ]] \
+  || die "installation must be started by the graphical installer"
 
 TARGET_GROUP="$(id -gn "$TARGET_USER")"
 TARGET_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6)"
 [[ -n "$TARGET_HOME" && -d "$TARGET_HOME" ]] || die "home directory for '$TARGET_USER' was not found"
-[[ "$(id -un)" == "$TARGET_USER" || "${EUID:-$(id -u)}" -eq 0 ]] \
-  || die "run the installer as '$TARGET_USER' or through sudo"
+TARGET_HOME_PARENT="$(cd -P -- "$(dirname -- "$TARGET_HOME")" && pwd -P)"
+[[ "$TARGET_HOME_PARENT" != "/" ]] || die "the target home must be on a dedicated home parent"
+verify_root_directory "$TARGET_HOME_PARENT"
 
-INSTALL_BASE="$TARGET_HOME/.local/share/browsec-deck-system"
+SYSTEM_ROOT="$TARGET_HOME_PARENT/$SYSTEM_DIR_NAME"
+INSTALL_BASE="$SYSTEM_ROOT/$TARGET_USER"
 APP_DIR="$INSTALL_BASE/app"
+LEGACY_HOME_INSTALL_BASE="$TARGET_HOME/.local/share/browsec-deck-system"
 
-if pgrep -f "^$INSTALL_BASE/app/(browsec-desktop|resources/xray/brow(box|ray))" \
-  >/dev/null 2>&1
+verify_root_directory "$SYSTEM_ROOT"
+verify_root_directory "$SYSTEM_ROOT/.tmp"
+case "$SCRIPT_DIR/" in
+  "$SYSTEM_ROOT/.tmp/"*) ;;
+  *) die "the privileged installer payload is outside the verified root temporary directory" ;;
+esac
+
+if pgrep -f "^($INSTALL_BASE|$LEGACY_HOME_INSTALL_BASE)/app/(browsec-desktop|resources/xray/brow(box|ray))" \
+    >/dev/null 2>&1
 then
   die "Browsec is still running; disconnect the VPN and quit the application"
 fi
 
-if [[ -z "$DEB_PATH" ]]; then
-  find_deb
-fi
-DEB_PATH="$(cd -- "$(dirname -- "$DEB_PATH")" && pwd -P)/$(basename -- "$DEB_PATH")"
 [[ -r "$DEB_PATH" ]] || die "cannot read $DEB_PATH"
 
 actual_deb_sha="$(sha256_file "$DEB_PATH")"
-if [[ "$actual_deb_sha" != "$EXPECTED_DEB_SHA256" && "$ALLOW_OTHER_VERSION" -ne 1 ]]; then
+if [[ "$actual_deb_sha" != "$EXPECTED_DEB_SHA256" ]]; then
   die "the .deb SHA-256 does not match the verified 1.2.2 build: $actual_deb_sha"
 fi
 
@@ -257,14 +304,14 @@ fi
 
 note "============================================================"
 note "Install location: $INSTALL_BASE"
-note "Temporary files:  $TARGET_HOME/.cache"
+note "Temporary files:  $SYSTEM_ROOT/.tmp"
 note "/var is NOT used for the new installation."
 note "============================================================"
 note "Administrative authorization is only required during installation."
-sudo -v
-sudo install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_GROUP" "$TARGET_HOME/.cache"
+ensure_root_directory "$INSTALL_BASE" 0755
 
-TEMP_DIR="$(mktemp -d "$TARGET_HOME/.cache/browsec-deck-install.XXXXXX")"
+TEMP_DIR="$(mktemp -d "$SYSTEM_ROOT/.tmp/install.XXXXXX")"
+chmod 0700 "$TEMP_DIR"
 PAYLOAD_ROOT="$TEMP_DIR/payload"
 
 note "Extracting $(basename -- "$DEB_PATH")..."
@@ -278,72 +325,65 @@ SOURCE_ASAR="$SOURCE_APP/resources/app.asar"
 [[ -x "$SOURCE_BROWBOX" ]] || die "browbox is missing from the payload"
 [[ -f "$SOURCE_ASAR" ]] || die "app.asar is missing from the payload"
 
-if [[ "$ALLOW_OTHER_VERSION" -ne 1 ]]; then
-  [[ "$(sha256_file "$SOURCE_ASAR")" == "$EXPECTED_ASAR_SHA256" ]] \
-    || die "unexpected app.asar"
-  [[ "$(sha256_file "$SOURCE_BROWBOX")" == "$EXPECTED_BROWBOX_SHA256" ]] \
-    || die "unexpected browbox"
+[[ "$(sha256_file "$SOURCE_ASAR")" == "$EXPECTED_ASAR_SHA256" ]] \
+  || die "unexpected app.asar"
+[[ "$(sha256_file "$SOURCE_BROWBOX")" == "$EXPECTED_BROWBOX_SHA256" ]] \
+  || die "unexpected browbox"
 
-  note "Adding Steam Deck application profiles..."
-  apply_deck_asar_patch "$SOURCE_ASAR"
-else
-  note "Steam Deck profiles were skipped for an unverified application version."
-fi
+note "Adding Steam Deck application profiles..."
+apply_deck_asar_patch "$SOURCE_ASAR"
+note "Applying Electron navigation safeguards..."
+apply_electron_security_patch "$SOURCE_ASAR"
 
 STAGE_DIR="$INSTALL_BASE/app.new"
 BACKUP_DIR="$INSTALL_BASE/app.previous"
 
-sudo install -d -m 0755 -o root -g root "$INSTALL_BASE"
-sudo rm -rf -- "$STAGE_DIR"
-sudo mv -- "$SOURCE_APP" "$STAGE_DIR"
-sudo chown -R root:root "$STAGE_DIR"
-sudo chmod -R go-w "$STAGE_DIR"
-sudo chmod 0755 "$STAGE_DIR/browsec-desktop"
-sudo chmod 0755 "$STAGE_DIR/resources/xray/browray" "$STAGE_DIR/resources/xray/browbox"
+rm -rf -- "$STAGE_DIR"
+mv -- "$SOURCE_APP" "$STAGE_DIR"
+chown -R root:root "$STAGE_DIR"
+chmod -R go-w "$STAGE_DIR"
+chmod 0755 "$STAGE_DIR/browsec-desktop"
+chmod 0755 "$STAGE_DIR/resources/xray/browray" "$STAGE_DIR/resources/xray/browbox"
 
 if command -v unshare >/dev/null 2>&1 && sudo -u "$TARGET_USER" unshare --user true >/dev/null 2>&1; then
-  sudo chown root:root "$STAGE_DIR/chrome-sandbox"
-  sudo chmod 0755 "$STAGE_DIR/chrome-sandbox"
+  chown root:root "$STAGE_DIR/chrome-sandbox"
+  chmod 0755 "$STAGE_DIR/chrome-sandbox"
 else
   note "User namespaces are unavailable; enabling the standard setuid Chromium sandbox."
-  sudo chown root:root "$STAGE_DIR/chrome-sandbox"
-  sudo chmod 4755 "$STAGE_DIR/chrome-sandbox"
+  chown root:root "$STAGE_DIR/chrome-sandbox"
+  chmod 4755 "$STAGE_DIR/chrome-sandbox"
 fi
 
-sudo setcap cap_net_admin+ep "$STAGE_DIR/resources/xray/browbox"
-getcap_output="$(sudo getcap "$STAGE_DIR/resources/xray/browbox" || true)"
+setcap cap_net_admin+ep "$STAGE_DIR/resources/xray/browbox"
+getcap_output="$(getcap "$STAGE_DIR/resources/xray/browbox" || true)"
 [[ "$getcap_output" == *"cap_net_admin"* ]] || die "failed to assign CAP_NET_ADMIN"
 
-sudo rm -rf -- "$BACKUP_DIR"
+rm -rf -- "$BACKUP_DIR"
 if [[ -d "$APP_DIR" ]]; then
-  sudo mv -- "$APP_DIR" "$BACKUP_DIR"
+  mv -- "$APP_DIR" "$BACKUP_DIR"
 fi
-if ! sudo mv -- "$STAGE_DIR" "$APP_DIR"; then
+if ! mv -- "$STAGE_DIR" "$APP_DIR"; then
   if [[ -d "$BACKUP_DIR" ]]; then
-    sudo mv -- "$BACKUP_DIR" "$APP_DIR"
+    mv -- "$BACKUP_DIR" "$APP_DIR"
   fi
   die "failed to activate the new installation"
 fi
-sudo rm -rf -- "$BACKUP_DIR"
+rm -rf -- "$BACKUP_DIR"
 
 render_template "$SCRIPT_DIR/templates/launch.sh" "$TEMP_DIR/launch.sh"
 render_template "$SCRIPT_DIR/templates/diagnose.sh" "$TEMP_DIR/diagnose.sh"
-render_template "$SCRIPT_DIR/templates/repair-capability.sh" \
-  "$TEMP_DIR/repair-capability.sh"
 render_template "$SCRIPT_DIR/templates/49-browsec-deck-resolved.rules" \
   "$TEMP_DIR/49-browsec-deck-resolved.rules"
 
-sudo install -m 0755 -o root -g root \
+install -m 0755 -o root -g root \
   "$TEMP_DIR/launch.sh" "$INSTALL_BASE/launch.sh"
-sudo install -m 0755 -o root -g root \
+install -m 0755 -o root -g root \
   "$TEMP_DIR/diagnose.sh" "$INSTALL_BASE/diagnose.sh"
-sudo install -m 0755 -o root -g root \
-  "$TEMP_DIR/repair-capability.sh" "$INSTALL_BASE/repair-capability.sh"
-sudo install -m 0644 -o root -g root \
+install -m 0644 -o root -g root \
   "$SCRIPT_DIR/templates/deck-app-aliases.json" \
   "$INSTALL_BASE/deck-app-aliases.json"
-sudo install -d -m 0755 -o root -g root /etc/polkit-1/rules.d
-sudo install -m 0644 -o root -g root \
+install -d -m 0755 -o root -g root /etc/polkit-1/rules.d
+install -m 0644 -o root -g root \
   "$TEMP_DIR/49-browsec-deck-resolved.rules" "$POLKIT_RULE_PATH"
 
 if [[ "$NO_DESKTOP_ENTRY" -ne 1 ]]; then
@@ -352,6 +392,12 @@ if [[ "$NO_DESKTOP_ENTRY" -ne 1 ]]; then
     sudo -u "$TARGET_USER" update-desktop-database \
       "$TARGET_HOME/.local/share/applications" >/dev/null 2>&1 || true
   fi
+fi
+
+if [[ -L "$LEGACY_HOME_INSTALL_BASE" ]]; then
+  rm -f -- "$LEGACY_HOME_INSTALL_BASE"
+elif [[ -d "$LEGACY_HOME_INSTALL_BASE" ]]; then
+  rm -rf -- "$LEGACY_HOME_INSTALL_BASE"
 fi
 
 note

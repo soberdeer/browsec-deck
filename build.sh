@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+PROJECT_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)"
+readonly PROJECT_ROOT
 readonly APP_VERSION="1.0.0"
 readonly KIT_ROOT="$PROJECT_ROOT/kit"
 readonly GUI_ROOT="$PROJECT_ROOT/gui"
@@ -99,7 +100,9 @@ printf 'Building the graphical installer...\n'
 if command -v go >/dev/null 2>&1; then
   (
     cd "$PROJECT_ROOT"
-    gofmt -w gui/main.go
+    [[ -z "$(gofmt -l gui/*.go)" ]] \
+      || die "Go sources are not formatted; run gofmt on gui/*.go"
+    go test ./...
     CGO_ENABLED=0 GOOS=linux GOARCH=amd64 \
       go build -trimpath -ldflags='-s -w' \
       -o "$GUI_ROOT/$GUI_BINARY" ./gui
@@ -108,11 +111,11 @@ elif command -v docker >/dev/null 2>&1; then
   docker run --rm \
     -v "$PROJECT_ROOT:/src" \
     -w /src \
-    golang:1.24-bookworm \
+    golang:1.26.5-bookworm \
     bash -c \
-      '/usr/local/go/bin/gofmt -w gui/main.go && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /usr/local/go/bin/go build -trimpath -ldflags="-s -w" -o "gui/Browsec Deck Installer" ./gui'
+      'test -z "$(/usr/local/go/bin/gofmt -l gui/*.go)" && /usr/local/go/bin/go test ./... && CGO_ENABLED=0 GOOS=linux GOARCH=amd64 /usr/local/go/bin/go build -trimpath -ldflags="-s -w" -o "gui/Browsec Deck Installer" ./gui'
 else
-  die "Go 1.24+ or Docker is required"
+  die "Go 1.26.5+ or Docker is required"
 fi
 
 [[ -x "$GUI_ROOT/$GUI_BINARY" ]] \

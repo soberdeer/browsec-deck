@@ -11,16 +11,20 @@ Project version: 1.0.0.
 - SHA-256 verification of the `.deb`, `app.asar`, `browbox`, patch, and
   official application icon;
 - fixed Steam Deck patch application to the verified `app.asar`;
+- fixed-size Electron hardening patch that blocks external in-window
+  navigation and permits only HTTPS URLs through `shell.openExternal`;
 - JSON, JavaScript regular expression, and final `process_path_regex`
   validation with `browbox check`;
 - complete installation as the unprivileged `deck` user;
 - root-owned installation under
-  `/home/deck/.local/share/browsec-deck-system`;
+  `/home/.browsec-deck/deck`;
 - confirmation that `/var/lib/browsec-deck` is not created;
-- temporary extraction under `/home/deck/.cache` and automatic cleanup;
+- root-only temporary extraction under `/home/.browsec-deck/.tmp` and
+  automatic cleanup;
 - `root:root` ownership and `cap_net_admin=ep` verification;
 - root-owned Polkit rule installation for
-  `org.freedesktop.resolve1.*`, target-user scoping, and removal;
+  the four required `org.freedesktop.resolve1` actions, target-user scoping,
+  and removal;
 - standalone Polkit authorization and restoration;
 - dynamic library checks for `browbox`;
 - root-owned setuid Chromium sandbox fallback when user namespaces are
@@ -31,7 +35,7 @@ Project version: 1.0.0.
 - simulated KDE `kdialog`/`qdbus` double-click flow, including install,
   progress updates, native privilege handoff, completion, and uninstall;
 - confirmation that privileged extraction occurs only after authorization in
-  a root-owned temporary directory under the target home cache;
+  a root-owned directory outside every user-writable path;
 - confirmation that all scripts, dialogs, diagnostics, and console output are
   English-only;
 - safe diagnostics;

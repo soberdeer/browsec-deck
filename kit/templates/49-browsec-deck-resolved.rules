@@ -1,8 +1,14 @@
 // Managed by Browsec Deck.
-// Allow the active local Steam Deck user to configure per-link DNS through
-// systemd-resolved without an authentication dialog.
+// Allow only the per-link DNS operations used by Browsec.
 polkit.addRule(function(action, subject) {
-    if (action.id.indexOf("org.freedesktop.resolve1.") === 0 &&
+    var allowedActions = {
+        "org.freedesktop.resolve1.set-dns-servers": true,
+        "org.freedesktop.resolve1.set-domains": true,
+        "org.freedesktop.resolve1.set-default-route": true,
+        "org.freedesktop.resolve1.revert": true
+    };
+
+    if (allowedActions[action.id] === true &&
         subject.user === "@TARGET_USER@" &&
         subject.local === true &&
         subject.active === true) {

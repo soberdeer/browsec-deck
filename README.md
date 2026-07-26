@@ -15,15 +15,15 @@ Source project for Browsec Deck 1.0.0, based on the official Browsec Desktop
 
 The GUI executable embeds a compressed copy of `kit/`. At runtime it displays
 native KDE dialogs, requests administrator authorization through Polkit, and
-extracts the privileged payload into a root-owned temporary directory under
-the target user's home cache.
+extracts the privileged payload under the root-controlled
+`/home/.browsec-deck` directory on the home partition.
 
 ## Build
 
 Requirements:
 
 - macOS or Linux;
-- `tar`, `bash`, and either Go 1.24+ or Docker;
+- `tar`, `bash`, and either Go 1.26.5+ or Docker;
 - approximately 1 GB of free disk space.
 
 Run:
@@ -69,10 +69,15 @@ match.
 - The official `.deb`, app.asar patch region, `browbox`, and Browsec icon are
   verified by fixed SHA-256 values.
 - Privileged extraction happens only after Polkit authorization.
-- The installed application is root-owned.
+- The installed application and privileged temporary files are below a
+  root-owned `/home/.browsec-deck` boundary.
+- Polkit executes the already-running installer inode through `/proc`, so a
+  file in Downloads cannot be replaced during authorization.
 - Only `browbox` receives `CAP_NET_ADMIN`.
+- The verified ASAR patch blocks external navigation inside the privileged
+  Electron renderer and restricts external links to HTTPS.
 - The Polkit rule is limited to the active local target user and
-  `org.freedesktop.resolve1.*`.
+  the four per-link DNS actions used by Browsec.
 - No passwordless sudoers entry or permanent root daemon is installed.
 
 This is an unofficial adaptation and not an official Browsec release.

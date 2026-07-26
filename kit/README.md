@@ -18,22 +18,13 @@ The graphical installer:
 
 No terminal commands are required. The SteamOS read-only mode does not need to be disabled.
 
-## Command-line installation
-
-The source bundle remains available for diagnostics and advanced use:
-
-```bash
-cd ~/Downloads/browsec-deck-1.0.0
-./install.sh
-```
-
-The `.deb` is included under `payload/`. Administrative authorization is required once.
-
-The installer prints the following locations before making changes:
+Only the bundled and hash-verified `.deb` is accepted. The privileged scripts
+are internal payloads and refuse to run from a user-writable source directory.
+The installer uses these locations:
 
 ```text
-Install location: /home/deck/.local/share/browsec-deck-system
-Temporary files:  /home/deck/.cache
+Install location: /home/.browsec-deck/deck
+Temporary files:  /home/.browsec-deck/.tmp
 ```
 
 ## Steam Deck application profiles
@@ -55,25 +46,20 @@ The Steam profile also covers the store, sign-in, and downloads. To route only o
 Run the safe diagnostics:
 
 ```bash
-~/.local/share/browsec-deck-system/diagnose.sh
+/home/.browsec-deck/deck/diagnose.sh
 ```
 
 If the capability was removed:
 
-```bash
-sudo ~/.local/share/browsec-deck-system/repair-capability.sh
-```
-
-The repair script refuses to operate if the application is no longer root-owned or contains group/world-writable files.
+Open `Browsec Deck Installer`, choose `Repair VPN permissions`, and approve
+the administrator prompt. Repair is executed from the installer's embedded
+and verified payload rather than from an installed script.
 
 
 ## Uninstallation
 
-Disconnect the VPN, quit Browsec, and run:
-
-```bash
-./uninstall.sh
-```
+Disconnect the VPN, quit Browsec, open `Browsec Deck Installer`, and choose
+`Uninstall`.
 
 The application, capability, Polkit rule, and launchers are removed. Account data and Electron settings are preserved in the user profile.
 
@@ -90,5 +76,5 @@ Debian package:
 479dcbfd72adb3d222c74acb06ef176aafd4472a2df90e37bc820083a5549896
 
 Patched app.asar:
-cfffdbdd82d216f1834449da993b7c1c1501462ea137645296839c4bf65f48e9
+ba3db3a0f8d8977113b8d96180f123f2082809c6490439bdd6a8de8bc6986f11
 ```
