@@ -1,7 +1,6 @@
 # Browsec Deck 1.0.0
 
-Source project for Browsec Deck 1.0.0, based on the official Browsec Desktop
-1.2.2 Linux payload.
+Source project for Browsec Deck, based on the official Browsec Desktop Linux payload.
 
 ## Project layout
 
