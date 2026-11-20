@@ -58,7 +58,7 @@ sed "s|@TARGET_USER@|$TARGET_USER|g" \
   "$SCRIPT_DIR/templates/49-browsec-deck-resolved.rules" >"$TEMP_RULE"
 
 printf '%s\n' \
-  "Passwordless authorization: required per-link DNS actions only" \
+  "Passwordless authorization: DNS actions only" \
   "User: $TARGET_USER" \
   "Rule: $RULE_PATH"
 install -m 0644 -o root -g root "$TEMP_RULE" "$RULE_PATH"

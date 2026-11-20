@@ -19,6 +19,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 const (
@@ -300,6 +301,47 @@ func progressForLine(line string) (int, string) {
 	default:
 		return -1, ""
 	}
+}
+
+func verifyDNSAuthorization() error {
+	pkcheck := findCommand("pkcheck")
+	if pkcheck == "" {
+		return errors.New("pkcheck is not installed")
+	}
+	stat, err := os.ReadFile("/proc/self/stat")
+	if err != nil {
+		return fmt.Errorf("cannot identify the installer process: %w", err)
+	}
+	closeParen := strings.LastIndexByte(string(stat), ')')
+	if closeParen < 0 {
+		return errors.New("cannot parse the installer process information")
+	}
+	fields := strings.Fields(string(stat[closeParen+1:]))
+	if len(fields) <= 19 {
+		return errors.New("cannot find the installer process start time")
+	}
+	process := fmt.Sprintf("%d,%s,%d", os.Getpid(), fields[19], os.Getuid())
+	actions := []string{
+		"org.freedesktop.resolve1.set-dns-servers",
+		"org.freedesktop.resolve1.set-domains",
+		"org.freedesktop.resolve1.set-default-route",
+		"org.freedesktop.resolve1.revert",
+		"org.freedesktop.resolve1.flush-caches",
+	}
+	for _, action := range actions {
+		var checkErr error
+		for attempt := 0; attempt < 10; attempt++ {
+			checkErr = exec.Command(pkcheck, "--action-id", action, "--process", process).Run()
+			if checkErr == nil {
+				break
+			}
+			time.Sleep(300 * time.Millisecond)
+		}
+		if checkErr != nil {
+			return fmt.Errorf("Polkit did not authorize %s: %w", action, checkErr)
+		}
+	}
+	return nil
 }
 
 func runPrivileged(p *progressDialog, action, targetUser string) (string, error) {
@@ -593,6 +635,11 @@ func main() {
 
 	logText, runErr := runPrivileged(progress, action, currentUser.Username)
 	logPath := writeLatestLog(home, logText)
+	var authErr error
+	if runErr == nil && (action == "install" || action == "repair") {
+		progress.update(98, "Checking DNS authorization...")
+		authErr = verifyDNSAuthorization()
+	}
 	progress.update(100, "Complete")
 	progress.close()
 
@@ -607,6 +654,14 @@ func main() {
 			details += "\nInstaller log: " + logPath
 		}
 		showError(icon, message, details)
+		return
+	}
+	if authErr != nil {
+		message := productName + " was installed, but DNS authorization could not be confirmed."
+		if action == "repair" {
+			message = "VPN permissions were repaired, but DNS authorization could not be confirmed."
+		}
+		showError(icon, message, authErr.Error()+"\n\nRun diagnostics from the installer for details.")
 		return
 	}
 

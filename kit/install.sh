@@ -5,7 +5,8 @@ readonly PRODUCT_NAME="Browsec Deck 1.0.0"
 readonly EXPECTED_DEB_SHA256="479dcbfd72adb3d222c74acb06ef176aafd4472a2df90e37bc820083a5549896"
 readonly EXPECTED_ASAR_SHA256="e1d60c72e0d02832d754a33e2d8a050adfc2a70d59c325aeb70f260141ae1907"
 readonly DECK_PATCHED_ASAR_SHA256="cfffdbdd82d216f1834449da993b7c1c1501462ea137645296839c4bf65f48e9"
-readonly PATCHED_ASAR_SHA256="ba3db3a0f8d8977113b8d96180f123f2082809c6490439bdd6a8de8bc6986f11"
+readonly ELECTRON_PATCHED_ASAR_SHA256="ba3db3a0f8d8977113b8d96180f123f2082809c6490439bdd6a8de8bc6986f11"
+readonly PATCHED_ASAR_SHA256="05f39df004e548dd73f3642000fb58d57590a88872f55118941526a3fc5ad6ec"
 readonly EXPECTED_BROWBOX_SHA256="68aeab83cc4ab2659a5b92232261a20746ccdafc3b3d1e19b2d63247eec3bbf7"
 readonly DECK_PATCH_OFFSET=167157093
 readonly DECK_PATCH_LENGTH=962
@@ -15,6 +16,10 @@ readonly ELECTRON_SECURITY_PATCH_OFFSET=167331245
 readonly ELECTRON_SECURITY_PATCH_LENGTH=342
 readonly ELECTRON_SECURITY_SOURCE_SHA256="2809526e846d9605a55f008992085ba9e889cf06f8f45e74416ff2b33ba1e2f6"
 readonly ELECTRON_SECURITY_PATCH_SHA256="d3722ea1c01ccd45e52af349a7f5cf675b863db0867540e64f52830085e99718"
+readonly UPDATER_SHUTDOWN_PATCH_OFFSET=167232501
+readonly UPDATER_SHUTDOWN_PATCH_LENGTH=69
+readonly UPDATER_SHUTDOWN_SOURCE_SHA256="e7cb95e52b72358e58b865d76addbfbb66610c76ae79621f9b8996804c2c56cf"
+readonly UPDATER_SHUTDOWN_PATCH_SHA256="c0d5038539631261694d77f078279cad7cd071e7511d70e1cf609d9c5e9b370a"
 readonly POLKIT_RULE_PATH="/etc/polkit-1/rules.d/49-browsec-deck-resolved.rules"
 readonly SYSTEM_DIR_NAME=".browsec-deck"
 
@@ -159,8 +164,44 @@ apply_electron_security_patch() {
   )"
   [[ "$source_block_sha" == "$ELECTRON_SECURITY_PATCH_SHA256" ]] \
     || die "the Electron security patch failed block verification"
-  [[ "$(sha256_file "$asar")" == "$PATCHED_ASAR_SHA256" ]] \
+  [[ "$(sha256_file "$asar")" == "$ELECTRON_PATCHED_ASAR_SHA256" ]] \
     || die "the hardened app.asar failed verification"
+}
+
+apply_updater_shutdown_patch() {
+  local asar="$1"
+  local source_block_sha
+  local replacement
+
+  [[ "$(sha256_file "$asar")" == "$ELECTRON_PATCHED_ASAR_SHA256" ]] \
+    || die "the updater patch requires the verified Electron security patch"
+
+  source_block_sha="$(
+    dd if="$asar" bs=1M skip="$UPDATER_SHUTDOWN_PATCH_OFFSET" \
+      count="$UPDATER_SHUTDOWN_PATCH_LENGTH" iflag=skip_bytes,count_bytes \
+      status=none | sha256_stream
+  )"
+  [[ "$source_block_sha" == "$UPDATER_SHUTDOWN_SOURCE_SHA256" ]] \
+    || die "unexpected app.asar contents in the updater patch region"
+
+  # Keep the replacement the same size so ASAR offsets remain unchanged.
+  replacement='const e=e=>{try{this.mainWindow?.webContents.send(qd,e)}catch{}};'
+  [[ "${#replacement}" -le "$UPDATER_SHUTDOWN_PATCH_LENGTH" ]] \
+    || die "the updater shutdown patch is too large"
+
+  printf '%-*s' "$UPDATER_SHUTDOWN_PATCH_LENGTH" "$replacement" \
+    | dd of="$asar" bs=1M seek="$UPDATER_SHUTDOWN_PATCH_OFFSET" \
+      conv=notrunc oflag=seek_bytes status=none
+
+  source_block_sha="$(
+    dd if="$asar" bs=1M skip="$UPDATER_SHUTDOWN_PATCH_OFFSET" \
+      count="$UPDATER_SHUTDOWN_PATCH_LENGTH" iflag=skip_bytes,count_bytes \
+      status=none | sha256_stream
+  )"
+  [[ "$source_block_sha" == "$UPDATER_SHUTDOWN_PATCH_SHA256" ]] \
+    || die "the updater shutdown patch failed block verification"
+  [[ "$(sha256_file "$asar")" == "$PATCHED_ASAR_SHA256" ]] \
+    || die "the exit-safe app.asar failed verification"
 }
 
 extract_deb() {
@@ -254,6 +295,7 @@ command -v getent >/dev/null 2>&1 || die "getent was not found"
 command -v setcap >/dev/null 2>&1 || die "setcap was not found (libcap package)"
 command -v getcap >/dev/null 2>&1 || die "getcap was not found (libcap package)"
 command -v pgrep >/dev/null 2>&1 || die "pgrep was not found"
+command -v systemctl >/dev/null 2>&1 || die "systemctl was not found"
 command -v dd >/dev/null 2>&1 || die "dd was not found (coreutils package)"
 command -v stat >/dev/null 2>&1 || die "stat was not found (coreutils package)"
 command -v xz >/dev/null 2>&1 || die "xz was not found (xz package)"
@@ -334,6 +376,8 @@ note "Adding Steam Deck application profiles..."
 apply_deck_asar_patch "$SOURCE_ASAR"
 note "Applying Electron navigation safeguards..."
 apply_electron_security_patch "$SOURCE_ASAR"
+note "Preventing updater errors during application shutdown..."
+apply_updater_shutdown_patch "$SOURCE_ASAR"
 
 STAGE_DIR="$INSTALL_BASE/app.new"
 BACKUP_DIR="$INSTALL_BASE/app.previous"
@@ -372,6 +416,10 @@ rm -rf -- "$BACKUP_DIR"
 
 render_template "$SCRIPT_DIR/templates/launch.sh" "$TEMP_DIR/launch.sh"
 render_template "$SCRIPT_DIR/templates/diagnose.sh" "$TEMP_DIR/diagnose.sh"
+render_template "$SCRIPT_DIR/templates/guard-vpn.sh" "$TEMP_DIR/guard-vpn.sh"
+render_template "$SCRIPT_DIR/templates/cleanup-vpn.sh" "$TEMP_DIR/cleanup-vpn.sh"
+render_template "$SCRIPT_DIR/templates/browsec-deck-guardian.service" \
+  "$TEMP_DIR/browsec-deck-guardian.service"
 render_template "$SCRIPT_DIR/templates/49-browsec-deck-resolved.rules" \
   "$TEMP_DIR/49-browsec-deck-resolved.rules"
 
@@ -379,12 +427,23 @@ install -m 0755 -o root -g root \
   "$TEMP_DIR/launch.sh" "$INSTALL_BASE/launch.sh"
 install -m 0755 -o root -g root \
   "$TEMP_DIR/diagnose.sh" "$INSTALL_BASE/diagnose.sh"
+install -m 0755 -o root -g root \
+  "$TEMP_DIR/guard-vpn.sh" "$INSTALL_BASE/guard-vpn.sh"
+install -m 0755 -o root -g root \
+  "$TEMP_DIR/cleanup-vpn.sh" "$INSTALL_BASE/cleanup-vpn.sh"
+install -m 0644 -o root -g root \
+  "$SCRIPT_DIR/templates/log.sh" "$INSTALL_BASE/log.sh"
 install -m 0644 -o root -g root \
   "$SCRIPT_DIR/templates/deck-app-aliases.json" \
   "$INSTALL_BASE/deck-app-aliases.json"
 install -d -m 0755 -o root -g root /etc/polkit-1/rules.d
 install -m 0644 -o root -g root \
   "$TEMP_DIR/49-browsec-deck-resolved.rules" "$POLKIT_RULE_PATH"
+install -d -m 0755 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+  "$TARGET_HOME/.config/systemd/user"
+install -m 0644 -o "$TARGET_USER" -g "$TARGET_GROUP" \
+  "$TEMP_DIR/browsec-deck-guardian.service" \
+  "$TARGET_HOME/.config/systemd/user/browsec-deck-guardian.service"
 
 if [[ "$NO_DESKTOP_ENTRY" -ne 1 ]]; then
   install_desktop_entry "$PAYLOAD_ROOT" "$TARGET_HOME"
@@ -405,5 +464,6 @@ note "$PRODUCT_NAME has been installed."
 note "Launch: $INSTALL_BASE/launch.sh"
 note "Diagnostics: $INSTALL_BASE/diagnose.sh"
 note "Polkit: systemd-resolved is authorized without repeated password prompts."
+note "A user-session guard will release VPN routes when Browsec exits."
 note
 note "The application is now available as 'Browsec Deck' in Desktop Mode."

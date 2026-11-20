@@ -1,0 +1,10 @@
+[Unit]
+Description=Browsec Deck VPN cleanup guard
+PartOf=graphical-session.target
+After=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=@INSTALL_BASE@/guard-vpn.sh
+ExecStopPost=@INSTALL_BASE@/cleanup-vpn.sh
+TimeoutStopSec=3s

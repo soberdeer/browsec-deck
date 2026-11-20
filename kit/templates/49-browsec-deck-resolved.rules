@@ -1,11 +1,12 @@
 // Managed by Browsec Deck.
-// Allow only the per-link DNS operations used by Browsec.
+// Authorize Browsec's DNS operations for the active local desktop user.
 polkit.addRule(function(action, subject) {
     var allowedActions = {
         "org.freedesktop.resolve1.set-dns-servers": true,
         "org.freedesktop.resolve1.set-domains": true,
         "org.freedesktop.resolve1.set-default-route": true,
-        "org.freedesktop.resolve1.revert": true
+        "org.freedesktop.resolve1.revert": true,
+        "org.freedesktop.resolve1.flush-caches": true
     };
 
     if (allowedActions[action.id] === true &&

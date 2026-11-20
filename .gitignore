@@ -6,3 +6,6 @@ gui/payload.tar.gz
 gui/core
 .DS_Store
 .idea/
+dump/
+kit/TESTING.md
+kit/README.md
