@@ -7,9 +7,16 @@ readonly APP_BIN="$APP_DIR/browsec-desktop"
 readonly BROWBOX="$APP_DIR/resources/xray/browbox"
 readonly BROWRAY="$APP_DIR/resources/xray/browray"
 readonly DECK_APP_ALIASES="$INSTALL_BASE/deck-app-aliases.json"
-readonly EXPECTED_ASAR_SHA256="ba3db3a0f8d8977113b8d96180f123f2082809c6490439bdd6a8de8bc6986f11"
+readonly EXPECTED_ASAR_SHA256="05f39df004e548dd73f3642000fb58d57590a88872f55118941526a3fc5ad6ec"
 readonly TARGET_USER="@TARGET_USER@"
 readonly POLKIT_RULE="/etc/polkit-1/rules.d/49-browsec-deck-resolved.rules"
+readonly GUARD_UNIT="$HOME/.config/systemd/user/browsec-deck-guardian.service"
+
+if [[ -r "$INSTALL_BASE/log.sh" ]]; then
+  source "$INSTALL_BASE/log.sh"
+  log_event "diagnostics-start pid=$$"
+  log_snapshot "diagnostics"
+fi
 
 failures=0
 
@@ -46,7 +53,7 @@ if [[ -c /dev/net/tun ]]; then ok "/dev/net/tun"; else fail "/dev/net/tun is mis
 if [[ -f "$APP_DIR/resources/app.asar" ]]; then
   actual_asar_sha="$(hash_file "$APP_DIR/resources/app.asar")"
   if [[ "$actual_asar_sha" == "$EXPECTED_ASAR_SHA256" ]]; then
-    ok "app.asar 1.2.2 with verified Steam Deck and Electron security patches"
+    ok "app.asar 1.2.2 with verified Steam Deck, Electron security, and shutdown patches"
   else
     warn "app.asar differs: $actual_asar_sha"
   fi
@@ -61,6 +68,17 @@ then
   ok "Steam Deck application profiles"
 else
   fail "Steam Deck application profiles are missing"
+fi
+
+if [[ -x "$INSTALL_BASE/guard-vpn.sh" && -x "$INSTALL_BASE/cleanup-vpn.sh" \
+  && -r "$INSTALL_BASE/log.sh" \
+  && -r "$GUARD_UNIT" ]] \
+  && grep -Fq "ExecStopPost=$INSTALL_BASE/cleanup-vpn.sh" "$GUARD_UNIT" \
+  && grep -Fq 'PartOf=graphical-session.target' "$GUARD_UNIT"
+then
+  ok "session guard for VPN cleanup"
+else
+  fail "VPN cleanup guard is missing; open the installer and choose Install or update"
 fi
 
 if command -v getcap >/dev/null 2>&1; then
@@ -79,11 +97,38 @@ if [[ -r "$POLKIT_RULE" ]] \
   && grep -Fq 'org.freedesktop.resolve1.set-domains' "$POLKIT_RULE" \
   && grep -Fq 'org.freedesktop.resolve1.set-default-route' "$POLKIT_RULE" \
   && grep -Fq 'org.freedesktop.resolve1.revert' "$POLKIT_RULE" \
+  && grep -Fq 'org.freedesktop.resolve1.flush-caches' "$POLKIT_RULE" \
   && grep -Fq "subject.user === \"$TARGET_USER\"" "$POLKIT_RULE"
 then
-  ok "Polkit: only required systemd-resolved actions are authorized for $TARGET_USER"
+  ok "Polkit: required systemd-resolved actions are configured for $TARGET_USER"
 else
-  fail "systemd-resolved Polkit rule is missing: $POLKIT_RULE"
+  fail "systemd-resolved Polkit rule is missing or outdated; open the installer and choose Repair VPN permissions"
+fi
+
+if [[ "$(id -un)" != "$TARGET_USER" ]]; then
+  fail "run diagnostics as $TARGET_USER to check Polkit authorization"
+elif ! command -v pkcheck >/dev/null 2>&1; then
+  fail "pkcheck was not found; Polkit authorization cannot be verified"
+else
+  process_start="$(awk '{print $22}' "/proc/$$/stat" 2>/dev/null || true)"
+  if [[ ! "$process_start" =~ ^[0-9]+$ ]]; then
+    fail "cannot identify the diagnostic process for Polkit authorization"
+  else
+    process_ref="$$,$process_start,$(id -u)"
+    for action in \
+      org.freedesktop.resolve1.set-dns-servers \
+      org.freedesktop.resolve1.set-domains \
+      org.freedesktop.resolve1.set-default-route \
+      org.freedesktop.resolve1.revert \
+      org.freedesktop.resolve1.flush-caches
+    do
+      if pkcheck --action-id "$action" --process "$process_ref" >/dev/null 2>&1; then
+        ok "Polkit authorizes $action without a password"
+      else
+        fail "Polkit does not authorize $action; open the installer and choose Repair VPN permissions"
+      fi
+    done
+  fi
 fi
 
 if [[ -O "$BROWBOX" ]]; then
@@ -118,6 +163,7 @@ else
 fi
 
 printf '\n'
+printf 'Session log: %s\n\n' "$HOME/Desktop/browsec-deck-log"
 if ((failures == 0)); then
   printf 'Diagnostics complete: no critical problems found.\n'
   exit 0

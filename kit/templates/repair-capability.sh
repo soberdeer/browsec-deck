@@ -47,6 +47,8 @@ HOME_PARENT="$(cd -P -- "$(dirname -- "$TARGET_HOME")" && pwd -P)"
 SYSTEM_ROOT="$HOME_PARENT/.browsec-deck"
 INSTALL_BASE="$SYSTEM_ROOT/$TARGET_USER"
 BROWBOX="$INSTALL_BASE/app/resources/xray/browbox"
+POLKIT_RULE_PATH="/etc/polkit-1/rules.d/49-browsec-deck-resolved.rules"
+RULE_TEMPLATE="$SCRIPT_DIR/49-browsec-deck-resolved.rules"
 
 case "$SCRIPT_DIR/" in
   "$SYSTEM_ROOT/.tmp/"*) ;;
@@ -80,4 +82,13 @@ capability="$(getcap "$BROWBOX" || true)"
 [[ "$capability" == *"cap_net_admin"* ]] \
   || die "failed to assign CAP_NET_ADMIN"
 
+[[ -f "$RULE_TEMPLATE" && ! -L "$RULE_TEMPLATE" ]] \
+  || die "the DNS authorization template is missing"
+install -d -m 0755 -o root -g root /etc/polkit-1/rules.d
+TEMP_RULE="$(mktemp "$SYSTEM_ROOT/.tmp/browsec-resolved.XXXXXX")"
+trap 'rm -f -- "$TEMP_RULE"' EXIT
+sed "s|@TARGET_USER@|$TARGET_USER|g" "$RULE_TEMPLATE" >"$TEMP_RULE"
+install -m 0644 -o root -g root "$TEMP_RULE" "$POLKIT_RULE_PATH"
+
 printf 'CAP_NET_ADMIN restored: %s\n' "$capability"
+printf 'DNS authorization restored: %s\n' "$POLKIT_RULE_PATH"

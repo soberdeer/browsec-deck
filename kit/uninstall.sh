@@ -47,6 +47,7 @@ SYSTEM_ROOT="$HOME_PARENT/.browsec-deck"
 INSTALL_BASE="$SYSTEM_ROOT/$TARGET_USER"
 LEGACY_HOME_INSTALL_BASE="$TARGET_HOME/.local/share/browsec-deck-system"
 LEGACY_INSTALL_BASE="/var/lib/browsec-deck"
+GUARD_UNIT="$TARGET_HOME/.config/systemd/user/browsec-deck-guardian.service"
 
 [[ -d "$SYSTEM_ROOT/.tmp" && ! -L "$SYSTEM_ROOT" && ! -L "$SYSTEM_ROOT/.tmp" ]] \
   || die "the verified root temporary directory is unavailable"
@@ -59,6 +60,13 @@ if pgrep -f "^($INSTALL_BASE|$LEGACY_HOME_INSTALL_BASE|$LEGACY_INSTALL_BASE)/app
   >/dev/null 2>&1
 then
   die "The VPN is still running. Disconnect Browsec and quit the application first."
+fi
+
+if command -v systemctl >/dev/null 2>&1; then
+  TARGET_UID="$(id -u "$TARGET_USER")"
+  sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="/run/user/$TARGET_UID" \
+    systemctl --user stop browsec-deck-guardian.service \
+    >/dev/null 2>&1 || true
 fi
 
 if [[ -e "$SYSTEM_ROOT" || -L "$SYSTEM_ROOT" ]]; then
@@ -85,6 +93,11 @@ else
 fi
 rm -rf -- "$LEGACY_INSTALL_BASE"
 rm -f -- "$POLKIT_RULE_PATH"
+rm -f -- "$GUARD_UNIT"
+if command -v systemctl >/dev/null 2>&1; then
+  sudo -u "$TARGET_USER" env XDG_RUNTIME_DIR="/run/user/$TARGET_UID" \
+    systemctl --user daemon-reload >/dev/null 2>&1 || true
+fi
 rm -f -- \
   "$TARGET_HOME/.local/bin/browsec-deck" \
   "$TARGET_HOME/.local/share/applications/browsec-deck.desktop" \

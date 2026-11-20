@@ -6,6 +6,12 @@ readonly APP_DIR="$INSTALL_BASE/app"
 readonly APP_BIN="$APP_DIR/browsec-desktop"
 readonly BROWBOX="$APP_DIR/resources/xray/browbox"
 readonly DECK_APP_ALIASES="$INSTALL_BASE/deck-app-aliases.json"
+source "$INSTALL_BASE/log.sh"
+
+log_event "launcher-start pid=$$"
+log_snapshot "launcher-start"
+graphical_target="$(systemctl --user is-active graphical-session.target 2>/dev/null || true)"
+log_event "graphical-session-target=${graphical_target:-unavailable}"
 
 show_error() {
   local message="$1"
@@ -45,4 +51,14 @@ export BDS
 export BROWSEC_FORCED_X11=1
 export ELECTRON_OZONE_PLATFORM_HINT=x11
 
+if ! command -v systemctl >/dev/null 2>&1 \
+  || ! systemctl --user daemon-reload >/dev/null 2>&1 \
+  || ! systemctl --user start browsec-deck-guardian.service >/dev/null 2>&1
+then
+  log_event "guardian-start-failed"
+  show_error "The VPN cleanup guard could not start. Open the installer and choose Install or update."
+  exit 1
+fi
+
+log_event "guardian-started launcher-exec"
 exec "$APP_BIN" --ozone-platform=x11 "$@"
